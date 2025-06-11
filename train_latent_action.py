@@ -74,19 +74,21 @@ def check_latent_encoding(model, val_loader, device, step, output_dir=None, use_
     
     with torch.no_grad():
         # Get a batch containing the ball
-        frame_t, frame_tp1 = next(iter(val_loader))
-        frame_t, frame_tp1 = frame_t.to(device), frame_tp1.to(device)
+        frame_t, frame_tp1, frame_tp2 = next(iter(val_loader))
+        frame_t, frame_tp1, frame_tp2 = frame_t.to(device), frame_tp1.to(device), frame_tp2.to(device)
         
         # 1. Identify ball position by frame difference
-        frame_diff = torch.abs(frame_tp1 - frame_t).sum(1)  # Sum across RGB channels
+        frame_diff1 = torch.abs(frame_tp1 - frame_t).sum(1)  # Sum across RGB channels
+        frame_diff2 = torch.abs(frame_t2 - frame_t1).sum(1)
+        frame_diff = (frame_diff1 + frame_diff2) / 2.0  # Average the two differences
         ball_mask = (frame_diff > 0.05).float()  # Create binary mask where ball is moving
         
         # 2. Get latent representation
         # First, do normal forward pass
-        recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1)
+        recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1, frame_tp2)
         
         # Then get the latent representation by calling encoder directly
-        x = torch.cat([frame_t, frame_tp1], dim=1)
+        x = torch.cat([frame_t, frame_tp1, frame_tp2], dim=1)
         z = model.encoder(x)
         
         # 3. Visualize to compare ball position and latent activations
@@ -94,7 +96,7 @@ def check_latent_encoding(model, val_loader, device, step, output_dir=None, use_
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             
             # Original frame with ball
-            axes[0].imshow(frame_tp1[i].permute(1, 2, 0).cpu().numpy())
+            axes[0].imshow(frame_tp2[i].permute(1, 2, 0).cpu().numpy())
             axes[0].set_title('Frame with Ball')
             
             # Ball mask (where movement is detected)
@@ -127,20 +129,23 @@ def test_encoder_decoder(model, val_loader, device, step, output_dir=None, use_w
     
     with torch.no_grad():
         # Get frames with ball movement
-        frame_t, frame_tp1 = next(iter(val_loader))
-        frame_t, frame_tp1 = frame_t.to(device), frame_tp1.to(device)
+        frame_t, frame_tp1, frame_tp2 = next(iter(val_loader))
+        frame_t, frame_tp1, frame_tp2 = frame_t.to(device), frame_tp1.to(device), frame_tp2.to(device)
         
         # 1. Normal forward pass - this handles permutations internally
-        recon, indices, _, _ = model(frame_t, frame_tp1)
+        recon, indices, _, _ = model(frame_t, frame_tp1, frame_tp2)
         
         # 2. Get latent representation - we need to permute inputs like the model does
         frame_t_permuted = frame_t.permute(0, 1, 3, 2)
         frame_tp1_permuted = frame_tp1.permute(0, 1, 3, 2)
-        x = torch.cat([frame_t_permuted, frame_tp1_permuted], dim=1)
+        frame_tp2_permuted = frame_tp2.permute(0, 1, 3, 2)
+        x = torch.cat([frame_t_permuted, frame_tp1_permuted, frame_tp2_permuted], dim=1)
         z = model.encoder(x)
         
         # 3. Find ball position
-        frame_diff = torch.abs(frame_tp1 - frame_t).sum(1, keepdim=True)
+        frame_diff1 = torch.abs(frame_tp1 - frame_t).sum(1, keepdim=True)
+        frame_diff2 = torch.abs(frame_tp2 - frame_tp1).sum(1, keepdim=True)
+        frame_diff = (frame_diff1 + frame_diff2) / 2.0  # Average the two differences
         ball_mask = (frame_diff > 0.05).float()
         
         # 4. Upsample ball mask to latent space dimensions
@@ -195,7 +200,7 @@ def test_encoder_decoder(model, val_loader, device, step, output_dir=None, use_w
                 return img_np
             
             # Target frame
-            axes[0].imshow(normalize_for_display(frame_tp1[i]))
+            axes[0].imshow(normalize_for_display(frame_tp2[i]))
             axes[0].set_title('Target Frame')
             
             # Normal reconstruction
@@ -374,17 +379,19 @@ def train(args):
     pbar = tqdm(range(args.max_iters), desc="Training", dynamic_ncols=True)
     while global_step < args.max_iters:
         try:
-            frame_t, frame_tp1 = next(data_iter)
+            frame_t, frame_tp1, frame_tp2 = next(data_iter)
         except StopIteration:
             data_iter = iter(train_loader)
-            frame_t, frame_tp1 = next(data_iter)
-        frame_t, frame_tp1 = frame_t.to(device), frame_tp1.to(device)
+            frame_t, frame_tp1, frame_tp2 = next(data_iter)
+        frame_t, frame_tp1, frame_tp2 = frame_t.to(device), frame_tp1.to(device), frame_tp2.to(device)
         with torch.amp.autocast(device.type, enabled=(scaler is not None)):
-            recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1)
+            recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1, frame_tp2)
             #rec_loss = F.mse_loss(recon, frame_tp1)
-            frame_diff = torch.abs(frame_tp1 - frame_t)
+            frame_diff1 = torch.abs(frame_tp1 - frame_t)
+            frame_diff2 = torch.abs(frame_tp2 - frame_tp1)
+            frame_diff = (frame_diff1 + frame_diff2) / 2.0
             motion_weight = 1.0 + 10.0 * (frame_diff.sum(dim=1, keepdim=True) > 0.05).float()
-            rec_loss = (motion_weight * (recon - frame_tp1)**2).mean()
+            rec_loss = (motion_weight * (recon - frame_tp2)**2).mean()
 
             # Entropy regularization
             entropy, hist = codebook_entropy(indices, 256)
@@ -409,10 +416,10 @@ def train(args):
         # Logging
         if (global_step + 1) % args.log_interval == 0:
             with torch.no_grad():
-                psnr_val = psnr(recon, frame_tp1)
-                ssim_val = ssim(recon, frame_tp1)
-                l1 = F.l1_loss(recon, frame_tp1).item()
-                l2 = F.mse_loss(recon, frame_tp1).item()
+                psnr_val = psnr(recon, frame_tp2)
+                ssim_val = ssim(recon, frame_tp2)
+                l1 = F.l1_loss(recon, frame_tp2).item()
+                l2 = F.mse_loss(recon, frame_tp2).item()
                 wandb.log({
                     'loss/total': loss.item(),
                     'loss/rec': rec_loss.item(),
@@ -431,7 +438,7 @@ def train(args):
         # Save reconstructions
         if (global_step + 1) % args.recon_interval == 0:
             with torch.no_grad():
-                grid = make_grid(torch.cat([frame_t, frame_tp1, recon], dim=0), nrow=args.batch_size)
+                grid = make_grid(torch.cat([frame_t, frame_tp1, frame_tp2, recon], dim=0), nrow=args.batch_size)
                 wandb.log({'reconstructions': [wandb.Image(grid, caption=f'Step {global_step+1}')]}, step=global_step+1)
         # Codebook reset
         if (global_step + 1) % args.codebook_reset_interval == 0:
@@ -490,11 +497,11 @@ def evaluate(model, loader, device, scaler, pbar_desc=None):
             loader_iter = tqdm(loader, desc=pbar_desc, dynamic_ncols=True)
         else:
             loader_iter = loader
-        for frame_t, frame_tp1 in loader_iter:
-            frame_t, frame_tp1 = frame_t.to(device), frame_tp1.to(device)
+        for frame_t, frame_tp1, frame_tp2 in loader_iter:
+            frame_t, frame_tp1, frame_tp2 = frame_t.to(device), frame_tp1.to(device), frame_tp2.to(device)
             with torch.amp.autocast(device.type, enabled=(scaler is not None)):
-                recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1)
-                rec_loss = F.mse_loss(recon, frame_tp1)
+                recon, indices, commit_loss, codebook_loss = model(frame_t, frame_tp1, frame_tp2)
+                rec_loss = F.mse_loss(recon, frame_tp2)
                 loss = rec_loss + commit_loss + codebook_loss
             losses.append(loss.item())
     model.train()

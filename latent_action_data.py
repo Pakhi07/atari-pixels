@@ -43,18 +43,28 @@ class AtariFramePairDataset(Dataset):
             self.episode_dirs = self.episode_dirs[n_train+n_val:]
         else:
             raise ValueError(f"Unknown split: {split}")
-        self.pairs = self._collect_pairs()
+        # self.pairs = self._collect_pairs()
+        self.triples = self._collect_triples() 
 
-    def _collect_pairs(self) -> List[Tuple[str, str]]:
-        pairs = []
+    # def _collect_pairs(self) -> List[Tuple[str, str]]:
+    #     pairs = []
+    #     for ep_dir in self.episode_dirs:
+    #         frame_files = sorted(glob.glob(os.path.join(ep_dir, '*.png')), key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+    #         for i in range(len(frame_files) - 1):
+    #             pairs.append((frame_files[i], frame_files[i+1]))
+    #     return pairs
+
+    def _collect_triples(self) -> List[Tuple[str, str, str]]:
+        triples = []
         for ep_dir in self.episode_dirs:
             frame_files = sorted(glob.glob(os.path.join(ep_dir, '*.png')), key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-            for i in range(len(frame_files) - 1):
-                pairs.append((frame_files[i], frame_files[i+1]))
-        return pairs
+            for i in range(len(frame_files) - 2):
+                triples.append((frame_files[i], frame_files[i+1], frame_files[i+2]))
+        return triples
 
     def __len__(self):
-        return len(self.pairs)
+        # return len(self.pairs)
+        return len(self.triples)
 
     def _load_frame(self, path: str) -> np.ndarray:
         img = Image.open(path)
@@ -70,10 +80,12 @@ class AtariFramePairDataset(Dataset):
         return arr
 
     def __getitem__(self, idx):
-        frame_t_path, frame_tp1_path = self.pairs[idx]
+        # frame_t_path, frame_tp1_path = self.pairs[idx]
+        frame_t_path, frame_tp1_path, frame_tp2_path = self.triples[idx]
         frame_t = self._load_frame(frame_t_path)
         frame_tp1 = self._load_frame(frame_tp1_path)
-        return torch.from_numpy(frame_t), torch.from_numpy(frame_tp1)
+        frame_tp2 = self._load_frame(frame_tp2_path)
+        return torch.from_numpy(frame_t), torch.from_numpy(frame_tp1), torch.from_numpy(frame_tp2)
 
 class ActionLatentPairDataset(Dataset):
     def __init__(self, json_path):

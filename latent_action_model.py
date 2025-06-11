@@ -36,7 +36,7 @@ class Encoder(nn.Module):
         For input_width=14, kernel_size=7, padding=3, stride=2:
         output_width = floor((14 + 6 - 7) / 2) + 1 = floor(13/2) + 1 = 6 + 1 = 7
     """
-    def __init__(self, in_channels=6, hidden_dims=[64, 128, 256, 512, 512], out_dim=128):
+    def __init__(self, in_channels=9, hidden_dims=[64, 128, 256, 512, 512], out_dim=128):
         super().__init__()
         layers = []
         c_in = in_channels
@@ -108,7 +108,7 @@ class Decoder(nn.Module):
     - The current frame is processed through a small conv net and concatenated with the latent before upsampling (FiLM-style conditioning).
     - No skip connections are used (to enforce information bottleneck).
     """
-    def __init__(self, in_channels=128, cond_channels=3, hidden_dims=[512, 512, 256, 128, 64], out_channels=3):
+    def __init__(self, in_channels=128, cond_channels=6, hidden_dims=[512, 512, 256, 128, 64], out_channels=3):
         super().__init__()
         # Process current frame for conditioning
         self.cond_conv = nn.Sequential(
@@ -156,20 +156,21 @@ class LatentActionVQVAE(nn.Module):
         self.vq = VectorQuantizer(num_embeddings=codebook_size, embedding_dim=embedding_dim, commitment_cost=commitment_cost)
         self.decoder = Decoder()
 
-    def forward(self, frame_t, frame_tp1, return_latent=False):
+    def forward(self, frame_t, frame_tp1, frame_tp2, return_latent=False):
         # Original frames: (B, C, 210, 160)
         # Need to permute to: (B, C, 160, 210) for the model's internal processing
         frame_t_permuted = frame_t.permute(0, 1, 3, 2)  # (B, C, 210, 160) -> (B, C, 160, 210)
         frame_tp1_permuted = frame_tp1.permute(0, 1, 3, 2)  # (B, C, 210, 160) -> (B, C, 160, 210)
+        frame_tp2_permuted = frame_tp2.permute(0, 1, 3, 2)  # (B, C, 210, 160) -> (B, C, 160, 210)
         
         # Concatenate along channel dimension (dim=1)
-        x = torch.cat([frame_t_permuted, frame_tp1_permuted], dim=1)  # (B, 2*C, 160, 210)
+        x = torch.cat([frame_t_permuted, frame_tp1_permuted, frame_tp2_permuted], dim=1)  # (B, 2*C, 160, 210)
         
         z = self.encoder(x)  # (B, 128, 5, 7)
         quantized, indices, commitment_loss, codebook_loss = self.vq(z)
         
         # The decoder expects permuted input
-        recon_permuted = self.decoder(quantized, frame_t_permuted)
+        recon_permuted = self.decoder(quantized, torch.cat([frame_t_permuted, frame_tp1_permuted], dim=1))  # (B, 3, 160, 210)
         
         # IMPORTANT: Permute back to match original frame shape (B, C, 210, 160)
         # We need to explicitly do this to ensure the output matches the target shape

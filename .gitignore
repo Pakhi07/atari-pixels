@@ -12,3 +12,4 @@ comparison_frames/
 debug_frames/
 debug/
 *.mp4
+**/.DS_Store
