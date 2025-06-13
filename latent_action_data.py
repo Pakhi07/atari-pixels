@@ -189,3 +189,149 @@ def get_action_state_latent_dataloaders(batch_size=128, num_workers=0, pin_memor
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
     return train_loader, val_loader 
+
+
+class RNNActionStateLatentDataset(Dataset):
+    def __init__(self, npz_path, seq_len=8):
+        """
+        Args:
+            npz_path: Path to NPZ file containing:
+                - actions: (N,) array of action indices
+                - frames: (N, C, H, W) array of frame stacks
+                - latents: (N, latent_dim) array of VQ-VAE latent codes
+            seq_len: Length of sequences to generate
+        """
+        data = np.load(npz_path)
+        self.actions = data['actions']  # (N,)
+        self.frames = data['frames']    # (N, 6, 210, 160)
+        self.latents = data['latents']  # (N, 35)
+        self.seq_len = seq_len
+        self.num_classes = 4
+        self.latent_dim = 35
+        self.codebook_size = 256
+        
+        # Precompute valid sequence start indices
+        self.valid_indices = []
+        episode_starts = np.where(self.actions == -1)[0]  # Assuming -1 marks episode boundaries
+        episode_starts = np.concatenate([[-1], episode_starts])  # Add dummy start
+        
+        for i in range(len(episode_starts)-1):
+            start = episode_starts[i] + 1
+            end = episode_starts[i+1]
+            if end - start >= seq_len:
+                self.valid_indices.extend(range(start, end - seq_len + 1))
+
+    def __len__(self):
+        return len(self.valid_indices)
+
+    def __getitem__(self, idx):
+        start_idx = self.valid_indices[idx]
+        end_idx = start_idx + self.seq_len
+        
+        # Get sequence slices
+        actions = self.actions[start_idx:end_idx]  # (seq_len,)
+        frames = self.frames[start_idx:end_idx]     # (seq_len, 6, 210, 160)
+        latents = self.latents[start_idx:end_idx]   # (seq_len, 35)
+        
+        # Convert actions to one-hot
+        action_onehot = np.zeros((self.seq_len, self.num_classes), dtype=np.float32)
+        action_onehot[np.arange(self.seq_len), actions] = 1.0
+        
+        return {
+            'actions': torch.from_numpy(action_onehot),
+            'frames': torch.from_numpy(frames.astype(np.float32)),
+            'latents': torch.from_numpy(latents.astype(np.int64))
+        }
+
+def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_workers=4, pin_memory=True, seed=42):
+    """
+    Returns train and validation dataloaders for RNN training.
+    Each batch contains sequences of (actions, frames, latents).
+    """
+    npz_path = os.path.join('data', 'actions', 'action_latent_pairs.npz')
+    
+    if not os.path.exists(npz_path):
+        raise FileNotFoundError(f"NPZ file not found at {npz_path}")
+    
+    # Create full dataset
+    full_dataset = RNNActionStateLatentDataset(npz_path, seq_len=seq_len)
+    
+    # Split into train/val
+    n = len(full_dataset)
+    n_train = int(0.8 * n)
+    n_val = n - n_train
+    
+    torch.manual_seed(seed)
+    train_set, val_set = random_split(full_dataset, [n_train, n_val])
+    
+    # Custom collate function to handle sequences
+    def collate_fn(batch):
+        # Stack sequences along batch dimension
+        actions = torch.stack([item['actions'] for item in batch])
+        frames = torch.stack([item['frames'] for item in batch])
+        latents = torch.stack([item['latents'] for item in batch])
+        return {
+            'actions': actions,  # (B, seq_len, num_actions)
+            'frames': frames,     # (B, seq_len, C, H, W)
+            'latents': latents    # (B, seq_len, latent_dim)
+        }
+    
+    train_loader = DataLoader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=collate_fn
+    )
+    
+    val_loader = DataLoader(
+        val_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=collate_fn
+    )
+    
+    return train_loader, val_loader
+
+
+def get_action_latent_dataloaders_for_rnn(batch_size=32, num_workers=4, pin_memory=True, seed=42):
+    """
+    Returns train and validation dataloaders for RNN training.
+    Each batch contains (action_onehot, latent_code).
+    """
+    json_path = os.path.join('data', 'actions', 'action_latent_pairs.json')
+    
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"JSON file not found at {json_path}")
+    
+    # Create full dataset
+    full_dataset = ActionLatentPairDataset(json_path)
+    
+    # Split into train/val
+    n = len(full_dataset)
+    n_train = int(0.8 * n)
+    n_val = n - n_train
+    
+    torch.manual_seed(seed)
+    train_set, val_set = random_split(full_dataset, [n_train, n_val])
+    
+    train_loader = DataLoader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+    
+    val_loader = DataLoader(
+        val_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+    
+    return train_loader, val_loader

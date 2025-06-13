@@ -6,17 +6,18 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 import argparse
-from latent_action_model import ActionToLatentMLP, ActionStateToLatentMLP
-from latent_action_data import get_action_latent_dataloaders, get_action_state_latent_dataloaders
+from latent_action_model import ActionToLatentMLP, ActionStateToLatentMLP, ActionStateToLatentRNN
+from latent_action_data import get_action_latent_dataloaders, get_action_state_latent_dataloaders, get_action_state_latent_dataloaders_for_rnn, get_action_latent_dataloaders_for_rnn
 
 # Hyperparameters
 BATCH_SIZE = 256
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 3e-4 #for RNN
 EPOCHS = 250
 GRAD_CLIP = 1.0
-CHECKPOINT_DIR = 'checkpoints/latent_action/'
-MODEL_NAME = 'action_to_latent_best.pt'
+CHECKPOINT_DIR = 'checkpoints/latent_action_rnn/'
+MODEL_NAME = 'action_to_latent_best_with_rnn.pt'
 SEED = 42
+SEQ_LEN = 8  
 
 def get_device():
     if torch.cuda.is_available():
@@ -41,23 +42,33 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None, wi
     running_loss = 0.0
     correct = 0
     total = 0
+
     for batch in tqdm(loader, desc='Train', leave=False):
         if with_frames:
-            actions, frames, latents = batch
-            actions = actions.to(device)
-            frames = frames.to(device)
+            # actions, frames, latents = batch
+            # actions = actions.to(device)
+            # frames = frames.to(device)
+            actions = batch['actions'.to(device)]
+            frames = batch['frames'.to(device)]
+            latents = batch['latents'.to(device)]
+            
         else:
-            actions, latents = batch
-            actions = actions.to(device)
+            # actions, latents = batch
+            # actions = actions.to(device)
+            # frames = None
+            actions = batch['actions'.to(device)]
             frames = None
-        latents = latents.to(device)
+            latents = batch['latents'.to(device)]
+        
         optimizer.zero_grad()
+
         with torch.cuda.amp.autocast(enabled=(scaler is not None)):
             if with_frames:
                 logits = model(actions, frames)
             else:
                 logits = model(actions)
             loss = criterion(logits.view(-1, 256), latents.view(-1))
+        
         if scaler:
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -68,10 +79,12 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None, wi
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             optimizer.step()
+
         running_loss += loss.item() * actions.size(0)
         preds = logits.argmax(dim=-1)
         correct += (preds == latents).sum().item()
         total += latents.numel()
+    
     avg_loss = running_loss / total
     accuracy = correct / total
     return avg_loss, accuracy
@@ -81,26 +94,35 @@ def eval_one_epoch(model, loader, criterion, device, with_frames=False):
     running_loss = 0.0
     correct = 0
     total = 0
+
     with torch.no_grad():
         for batch in tqdm(loader, desc='Val', leave=False):
             if with_frames:
-                actions, frames, latents = batch
-                actions = actions.to(device)
-                frames = frames.to(device)
+                # actions, frames, latents = batch
+                # actions = actions.to(device)
+                # frames = frames.to(device)
+                actions = batch['actions'.to(device)]
+                frames = batch['frames'.to(device)]
+                latents = batch['latents'.to(device)]
             else:
-                actions, latents = batch
-                actions = actions.to(device)
+                # actions, latents = batch
+                # actions = actions.to(device)
+                # frames = None
+                actions = batch['actions'.to(device)]
+                latents = batch['latents'.to(device)]
                 frames = None
-            latents = latents.to(device)
+            # latents = latents.to(device)
             if with_frames:
                 logits = model(actions, frames)
             else:
                 logits = model(actions)
+
             loss = criterion(logits.view(-1, 256), latents.view(-1))
             running_loss += loss.item() * actions.size(0)
             preds = logits.argmax(dim=-1)
             correct += (preds == latents).sum().item()
             total += latents.numel()
+
     avg_loss = running_loss / total
     accuracy = correct / total
     return avg_loss, accuracy
@@ -115,10 +137,11 @@ def main():
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
     # wandb init
-    wandb.init(project='atari-action-to-latent', config={
+    wandb.init(project='atari-action-to-latent-with-rnn', config={
         'batch_size': BATCH_SIZE,
         'learning_rate': LEARNING_RATE,
         'epochs': EPOCHS,
+        'seq_len': SEQ_LEN,
         'grad_clip': GRAD_CLIP,
         'seed': SEED,
         'with_frames': args.with_frames
@@ -126,12 +149,20 @@ def main():
 
     # Data
     if args.with_frames:
-        train_loader, val_loader = get_action_state_latent_dataloaders(batch_size=BATCH_SIZE)
-        model = ActionStateToLatentMLP()
+        train_loader, val_loader = get_action_state_latent_dataloaders_for_rnn(batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
+        model = ActionStateToLatentRNN(
+            action_dim=4,
+            latent_dim=35,
+            codebook_size=256,
+        )
         model_name = 'action_state_to_latent_best.pt'
     else:
-        train_loader, val_loader = get_action_latent_dataloaders(batch_size=BATCH_SIZE)
-        model = ActionToLatentMLP()
+        train_loader, val_loader = get_action_latent_dataloaders_for_rnn(batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
+        model = ActionStateToLatentRNN(
+            action_dim=4,
+            latent_dim=35,
+            codebook_size=256,
+        )
         model_name = 'action_to_latent_best.pt'
     model = model.to(device)
     if device.type == 'cuda':
@@ -139,7 +170,8 @@ def main():
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
 
     scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
 
@@ -150,15 +182,20 @@ def main():
         print(f"Epoch {epoch}/{EPOCHS}")
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, with_frames=args.with_frames)
         val_loss, val_acc = eval_one_epoch(model, val_loader, criterion, device, with_frames=args.with_frames)
+        scheduler.step(val_acc)
+
         print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
         print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        
         wandb.log({
             'epoch': epoch,
             'train_loss': train_loss,
             'train_acc': train_acc,
             'val_loss': val_loss,
-            'val_acc': val_acc
+            'val_acc': val_acc,
+            'lr': optimizer.param_groups[0]['lr'],
         })
+
         # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc

@@ -182,7 +182,15 @@ class LatentActionVQVAE(nn.Module):
             return recon, indices, commitment_loss, codebook_loss
 
 class ActionToLatentMLP(nn.Module):
-    def __init__(self, input_dim=4, hidden1=512, hidden2=256, latent_dim=35, codebook_size=256, dropout=0.2):
+    def __init__(
+        self, 
+        input_dim=4, 
+        hidden1=512, 
+        hidden2=256, 
+        latent_dim=35, 
+        codebook_size=256, 
+        dropout=0.2
+    ):
         super().__init__()
         self.latent_dim = latent_dim
         self.codebook_size = codebook_size
@@ -212,7 +220,14 @@ class ActionToLatentMLP(nn.Module):
         return samples
 
 class ActionStateToLatentMLP(nn.Module):
-    def __init__(self, action_dim=4, hidden1=512, hidden2=256, latent_dim=35, codebook_size=256, dropout=0.2):
+    def __init__(
+        self, 
+        action_dim=4, 
+        hidden1=512, 
+        hidden2=256, 
+        latent_dim=35, 
+        codebook_size=256, 
+        dropout=0.2):
         super().__init__()
         self.latent_dim = latent_dim
         self.codebook_size = codebook_size
@@ -252,4 +267,85 @@ class ActionStateToLatentMLP(nn.Module):
         probs = F.softmax(logits / temperature, dim=-1)
         batch, latent_dim, codebook_size = probs.shape
         samples = torch.multinomial(probs.view(-1, codebook_size), 1).view(batch, latent_dim)
+        return samples
+
+
+
+class ActionStateToLatentRNN(nn.Module):
+    def __init__(
+        self,
+        action_dim=4,
+        hidden_dim=256,
+        latent_dim=35,
+        codebook_size=256,
+        num_layers=2,
+        dropout=0.2,
+    ):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.codebook_size = codebook_size
+        self.rnn_type = rnn_type.lower()
+
+        # Frame encoder (same as before)
+        self.frame_encoder = nn.Sequential(
+            nn.Conv2d(9, 16, kernel_size=8, stride=4),  # (B, 16, 51, 39)
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),  # (B, 32, 24, 18)
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2),  # (B, 64, 11, 8)
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(64 * 11 * 8, 128),
+            nn.ReLU(),
+        )
+        
+        self.rnn = nn.GRU(
+            input_size=action_dim + 128,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0,
+        )
+       
+
+        # Output head
+        self.head = nn.Linear(hidden_dim, latent_dim * codebook_size)
+
+    def forward(self, actions, frames):
+        """
+        Args:
+            actions: (batch, seq_len, action_dim)
+            frames: (batch, seq_len, C, H, W)
+        Returns:
+            logits: (batch, seq_len, latent_dim, codebook_size)
+        """
+        batch_size, seq_len = actions.shape[:2]
+
+        # Encode frames
+        frames = frames.view(-1, *frames.shape[2:])  # (batch*seq_len, C, H, W)
+        frame_features = self.frame_encoder(frames)  # (batch*seq_len, 128)
+        frame_features = frame_features.view(batch_size, seq_len, -1)  # (batch, seq_len, 128)
+
+        # Combine actions + frame features
+        x = torch.cat([actions, frame_features], dim=-1)  # (batch, seq_len, action_dim + 128)
+
+        # RNN pass
+        if self.rnn_type == "lstm":
+            rnn_out, (h_n, c_n) = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
+        else:
+            rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
+
+        # Predict latents
+        logits = self.head(rnn_out)  # (batch, seq_len, latent_dim * codebook_size)
+        logits = logits.view(batch_size, seq_len, self.latent_dim, self.codebook_size)
+
+        return logits
+
+    def sample_latents(self, logits, temperature=1.0):
+        """Sample from logits (same as before)."""
+        if temperature <= 0:
+            raise ValueError("Temperature must be > 0")
+        probs = F.softmax(logits / temperature, dim=-1)
+        batch, seq_len, latent_dim, codebook_size = probs.shape
+        samples = torch.multinomial(probs.view(-1, codebook_size), 1).view(batch, seq_len, latent_dim)
         return samples
