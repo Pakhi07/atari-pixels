@@ -80,15 +80,19 @@ def collect_action_latent_pairs(
             frame_t = torch.from_numpy(obs).float().permute(2, 0, 1).unsqueeze(0) / 255.0
             done = False
             steps = 0
-            while not done and steps < max_steps_per_episode and len(collected) < n_pairs:
+            action = agent.select_action()
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            frame_tp1 = torch.from_numpy(next_obs).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+            while not done and steps < max_steps_per_episode and len(collected) < n_pairs-1:
                 action = agent.select_action()
                 next_obs, reward, terminated, truncated, info = env.step(action)
-                frame_tp1 = torch.from_numpy(next_obs).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+                frame_tp2 = torch.from_numpy(next_obs).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+                # frame tp2
                 try:
                     with torch.no_grad():
                         frame_t = frame_t.to(device)
                         frame_tp1 = frame_tp1.to(device)
-                        _, indices, *_ = model(frame_t, frame_tp1)
+                        _, indices, *_ = model(frame_t, frame_tp1, frame_tp2)
                 except Exception as e:
                     print(f"Error during model call: {e}")
                     print(f"frame_t shape: {frame_t.shape}, dtype: {frame_t.dtype}")
@@ -101,6 +105,7 @@ def collect_action_latent_pairs(
                 })
                 pbar.update(1)
                 frame_t = frame_tp1.cpu()
+                frame_tp1 = frame_tp2.cpu()
                 steps += 1
                 if terminated or truncated:
                     done = True
@@ -150,25 +155,32 @@ def collect_action_state_latent_triples(
             # Add this line to flip the channels to match VQ-VAE training format
             obs = obs[:, :, ::-1].copy()  # Swap BGR -> RGB to match PNG format
             frame_t = torch.from_numpy(obs).float().permute(2, 0, 1) / 255.0  # (3, 210, 160)
-            last2_frames = [frame_t.clone(), frame_t.clone()]
+            last3_frames = [frame_t.clone(), frame_t.clone(), frame_t.clone()]  # Store last 3 frames
             done = False
             steps = 0
+            action = agent.select_action()
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            # Also swap channels for next_obs
+            next_obs = next_obs[:, :, ::-1].copy()  # Swap BGR -> RGB
+            frame_tp1 = torch.from_numpy(next_obs).float().permute(2, 0, 1) / 255.0
             while not done and steps < max_steps_per_episode and len(actions) < n_pairs:
                 action = agent.select_action()
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 # Also swap channels for next_obs
                 next_obs = next_obs[:, :, ::-1].copy()  # Swap BGR -> RGB
-                frame_tp1 = torch.from_numpy(next_obs).float().permute(2, 0, 1) / 255.0
-                stacked_frames = torch.cat(last2_frames, dim=0)
+                frame_tp2 = torch.from_numpy(next_obs).float().permute(2, 0, 1) / 255.0
+                stacked_frames = torch.cat(last3_frames, dim=0)
                 try:
                     with torch.no_grad():
-                        f0 = last2_frames[0].unsqueeze(0).to(device)
-                        f1 = last2_frames[1].unsqueeze(0).to(device)
+                        f0 = last3_frames[0].unsqueeze(0).to(device)
+                        f1 = last3_frames[1].unsqueeze(0).to(device)
+                        f2 = last3_frames[2].unsqueeze(0).to(device)
 
-                        f1_batch = last2_frames[1].unsqueeze(0).to(device)  # [1, 3, 210, 160]
+                        f1_batch = last3_frames[1].unsqueeze(0).to(device)  # [1, 3, 210, 160]
                         frame_tp1_batch = frame_tp1.unsqueeze(0).to(device) # [1, 3, 210, 160]
+                        frame_tp2_batch = frame_tp2.unsqueeze(0).to(device) # [1, 3, 210, 160]
 
-                        _, indices, *_ = model(f1_batch, frame_tp1_batch)
+                        _, indices, *_ = model(f1_batch, frame_tp1_batch, frame_tp2_batch)
                 except Exception as e:
                     print(f"Error during model call: {e}")
                     print(f"frame_t shape: {f0.shape}, dtype: {f0.dtype}")
@@ -179,8 +191,9 @@ def collect_action_state_latent_triples(
                 frames.append(stacked_frames.cpu().numpy())
                 latents.append(np.array(latent_code, dtype=np.int64))
                 pbar.update(1)
-                last2_frames[0] = last2_frames[1]
-                last2_frames[1] = frame_tp1.clone()
+                last3_frames[0] = last3_frames[1]
+                last3_frames[1] = last3_frames[2]
+                last3_frames[2] = frame_tp2.clone()  
                 steps += 1
                 if terminated or truncated:
                     done = True

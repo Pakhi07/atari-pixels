@@ -46,13 +46,13 @@ class AtariFramePairDataset(Dataset):
         # self.pairs = self._collect_pairs()
         self.triples = self._collect_triples() 
 
-    # def _collect_pairs(self) -> List[Tuple[str, str]]:
-    #     pairs = []
-    #     for ep_dir in self.episode_dirs:
-    #         frame_files = sorted(glob.glob(os.path.join(ep_dir, '*.png')), key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-    #         for i in range(len(frame_files) - 1):
-    #             pairs.append((frame_files[i], frame_files[i+1]))
-    #     return pairs
+    def _collect_pairs(self) -> List[Tuple[str, str]]:
+        pairs = []
+        for ep_dir in self.episode_dirs:
+            frame_files = sorted(glob.glob(os.path.join(ep_dir, '*.png')), key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+            for i in range(len(frame_files) - 1):
+                pairs.append((frame_files[i], frame_files[i+1]))
+        return pairs
 
     def _collect_triples(self) -> List[Tuple[str, str, str]]:
         triples = []

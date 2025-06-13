@@ -216,9 +216,9 @@ class ActionStateToLatentMLP(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.codebook_size = codebook_size
-        # Frame encoder for 2 RGB frames (6 channels, 210x160)
+        # Frame encoder for 3 RGB frames (9 channels, 210x160)
         self.frame_encoder = nn.Sequential(
-            nn.Conv2d(6, 16, kernel_size=8, stride=4),  # (B, 16, 51, 39)
+            nn.Conv2d(9, 16, kernel_size=8, stride=4),  # (B, 16, 51, 39)
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=4, stride=2),  # (B, 32, 24, 18)
             nn.ReLU(),

@@ -72,7 +72,14 @@ def main():
     print("[INFO] Loading action-to-latent model...")
     action_model = ActionStateToLatentMLP().to(device)
     ckpt = torch.load('checkpoints/latent_action/action_state_to_latent_best.pt', map_location=device)
-    action_model.load_state_dict(ckpt['model_state_dict'])
+    fixed_state_dict = {}
+    for k,v in ckpt['model_state_dict'].items():
+        if k.startswith('_orig_mod'):
+            fixed_state_dict[k.replace('_orig_mod.', '')] = v
+        else:
+            fixed_state_dict[k] = v
+    
+    action_model.load_state_dict(fixed_state_dict)
     action_model.eval()
     if device.type == 'cuda':
         action_model = torch.compile(action_model)
@@ -84,7 +91,7 @@ def main():
     current_frame = torch.from_numpy(init_frame_np).permute(2, 0, 1).unsqueeze(0).to(device)
     
     # Set up frame history
-    last2_frames = [current_frame.clone(), current_frame.clone()]
+    last3_frames = [current_frame.clone(), current_frame.clone(), current_frame.clone()]
     
     # Action mapping
     action_names = ['NOOP', 'FIRE', 'RIGHT', 'LEFT']
@@ -146,11 +153,11 @@ def main():
         # Only print non-NOOP actions to console
         if action_idx != 0:
             print(f"Action: {action_names[action_idx]}")
-        
-        # Generate next frame
+
+        # clone first frame to make second frame and then generate the third frame 
         with torch.no_grad():
-            # Stack last 2 frames
-            stacked_frames = torch.cat([last2_frames[0], last2_frames[1]], dim=1)
+            # Stack last 3 frames
+            stacked_frames = torch.cat([last3_frames[0], last3_frames[1], last3_frames[2]], dim=1)
             
             # Get action prediction
             onehot = action_to_onehot(action_idx, device)
@@ -165,15 +172,19 @@ def main():
             quantized = quantized.permute(0, 3, 1, 2).contiguous()
             
             # Generate next frame
-            frame_in = current_frame.permute(0, 1, 3, 2)
+            frame_in0 = last3_frames[0].permute(0, 1, 3, 2)
+            frame_in1 = last3_frames[1].permute(0, 1, 3, 2)
+            frame_in = torch.cat([frame_in0, frame_in1], dim=1)
+
             quantized = quantized.to(device)
             frame_in = frame_in.to(device)
             next_frame = world_model.decoder(quantized, frame_in)
             next_frame = next_frame.permute(0, 1, 3, 2)
             
             # Update frame history
-            last2_frames[0] = last2_frames[1]
-            last2_frames[1] = next_frame.clone()
+            last3_frames[0] = last3_frames[1]
+            last3_frames[1] = last3_frames[2]
+            last3_frames[2] = next_frame.clone()
             current_frame = next_frame.clone()
         
         # Convert the frame to a pygame surface for display
