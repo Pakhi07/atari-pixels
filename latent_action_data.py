@@ -192,7 +192,7 @@ def get_action_state_latent_dataloaders(batch_size=128, num_workers=0, pin_memor
 
 
 class RNNActionStateLatentDataset(Dataset):
-    def __init__(self, npz_path, seq_len=8):
+    def __init__(self, npz_path, seq_len=3):
         """
         Args:
             npz_path: Path to NPZ file containing:
@@ -212,14 +212,10 @@ class RNNActionStateLatentDataset(Dataset):
         
         # Precompute valid sequence start indices
         self.valid_indices = []
-        episode_starts = np.where(self.actions == -1)[0]  # Assuming -1 marks episode boundaries
-        episode_starts = np.concatenate([[-1], episode_starts])  # Add dummy start
-        
-        for i in range(len(episode_starts)-1):
-            start = episode_starts[i] + 1
-            end = episode_starts[i+1]
-            if end - start >= seq_len:
-                self.valid_indices.extend(range(start, end - seq_len + 1))
+        start = 0
+        end = len(self.actions)
+        if end - start >= seq_len:
+            self.valid_indices = list(range(start, end - seq_len + 1))
 
     def __len__(self):
         return len(self.valid_indices)
@@ -243,7 +239,7 @@ class RNNActionStateLatentDataset(Dataset):
             'latents': torch.from_numpy(latents.astype(np.int64))
         }
 
-def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_workers=4, pin_memory=True, seed=42):
+def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=3, num_workers=1, pin_memory=False, seed=42):
     """
     Returns train and validation dataloaders for RNN training.
     Each batch contains sequences of (actions, frames, latents).
@@ -255,9 +251,11 @@ def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_wo
     
     # Create full dataset
     full_dataset = RNNActionStateLatentDataset(npz_path, seq_len=seq_len)
+    # print("full dataset: ", full_dataset)
     
     # Split into train/val
     n = len(full_dataset)
+    # print(n)
     n_train = int(0.8 * n)
     n_val = n - n_train
     
@@ -270,6 +268,9 @@ def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_wo
         actions = torch.stack([item['actions'] for item in batch])
         frames = torch.stack([item['frames'] for item in batch])
         latents = torch.stack([item['latents'] for item in batch])
+        # print("action beeee: ", actions)
+        # print("frames: ", frames)
+        # print("latent: ", latents)
         return {
             'actions': actions,  # (B, seq_len, num_actions)
             'frames': frames,     # (B, seq_len, C, H, W)
@@ -281,7 +282,7 @@ def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_wo
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=pin_memory,
+        pin_memory=False,
         collate_fn=collate_fn
     )
     
@@ -290,14 +291,14 @@ def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=8, num_wo
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=pin_memory,
+        pin_memory=False,
         collate_fn=collate_fn
     )
     
     return train_loader, val_loader
 
 
-def get_action_latent_dataloaders_for_rnn(batch_size=32, num_workers=4, pin_memory=True, seed=42):
+def get_action_latent_dataloaders_for_rnn(batch_size=32, num_workers=1, pin_memory=False, seed=42):
     """
     Returns train and validation dataloaders for RNN training.
     Each batch contains (action_onehot, latent_code).
@@ -323,7 +324,7 @@ def get_action_latent_dataloaders_for_rnn(batch_size=32, num_workers=4, pin_memo
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=pin_memory
+        pin_memory=False
     )
     
     val_loader = DataLoader(
@@ -331,7 +332,7 @@ def get_action_latent_dataloaders_for_rnn(batch_size=32, num_workers=4, pin_memo
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=pin_memory
+        pin_memory=False
     )
     
     return train_loader, val_loader

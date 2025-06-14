@@ -10,14 +10,14 @@ from latent_action_model import ActionToLatentMLP, ActionStateToLatentMLP, Actio
 from latent_action_data import get_action_latent_dataloaders, get_action_state_latent_dataloaders, get_action_state_latent_dataloaders_for_rnn, get_action_latent_dataloaders_for_rnn
 
 # Hyperparameters
-BATCH_SIZE = 256
+BATCH_SIZE = 128
 LEARNING_RATE = 3e-4 #for RNN
 EPOCHS = 250
 GRAD_CLIP = 1.0
 CHECKPOINT_DIR = 'checkpoints/latent_action_rnn/'
 MODEL_NAME = 'action_to_latent_best_with_rnn.pt'
 SEED = 42
-SEQ_LEN = 8  
+SEQ_LEN = 3
 
 def get_device():
     if torch.cuda.is_available():
@@ -48,17 +48,22 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None, wi
             # actions, frames, latents = batch
             # actions = actions.to(device)
             # frames = frames.to(device)
-            actions = batch['actions'.to(device)]
-            frames = batch['frames'.to(device)]
-            latents = batch['latents'.to(device)]
-            
+            actions = batch['actions']
+            actions = actions.to(device)
+            frames = batch['frames']
+            frames = frames.to(device)
+            latents = batch['latents']
+            latents = latents.to(device)
+
         else:
             # actions, latents = batch
             # actions = actions.to(device)
             # frames = None
-            actions = batch['actions'.to(device)]
+            actions = batch['actions']
+            actions = actions.to(device)
             frames = None
-            latents = batch['latents'.to(device)]
+            latents = batch['latents']
+            latents = latents.to(device)
         
         optimizer.zero_grad()
 
@@ -101,15 +106,20 @@ def eval_one_epoch(model, loader, criterion, device, with_frames=False):
                 # actions, frames, latents = batch
                 # actions = actions.to(device)
                 # frames = frames.to(device)
-                actions = batch['actions'.to(device)]
-                frames = batch['frames'.to(device)]
-                latents = batch['latents'.to(device)]
+                actions = batch['actions']
+                actions = actions.to(device)
+                frames = batch['frames']
+                frames = frames.to(device)
+                latents = batch['latents']
+                latents = latents.to(device)
             else:
                 # actions, latents = batch
                 # actions = actions.to(device)
                 # frames = None
-                actions = batch['actions'.to(device)]
-                latents = batch['latents'.to(device)]
+                actions = batch['actions']
+                actions = actions.to(device)
+                latents = batch['latents']
+                latents = latents.to(device)
                 frames = None
             # latents = latents.to(device)
             if with_frames:
@@ -157,7 +167,7 @@ def main():
         )
         model_name = 'action_state_to_latent_best.pt'
     else:
-        train_loader, val_loader = get_action_latent_dataloaders_for_rnn(batch_size=BATCH_SIZE, seq_len=SEQ_LEN)
+        train_loader, val_loader = get_action_latent_dataloaders_for_rnn(batch_size=BATCH_SIZE)
         model = ActionStateToLatentRNN(
             action_dim=4,
             latent_dim=35,
@@ -210,6 +220,6 @@ def main():
                 print(f"[Warning] Failed to save checkpoint: {e}")
     wandb.finish()
     print(f"Training complete. Best val acc: {best_val_acc:.4f}. Model saved to {best_ckpt_path}")
-
+ 
 if __name__ == '__main__':
     main() 

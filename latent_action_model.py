@@ -284,7 +284,6 @@ class ActionStateToLatentRNN(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.codebook_size = codebook_size
-        self.rnn_type = rnn_type.lower()
 
         # Frame encoder (same as before)
         self.frame_encoder = nn.Sequential(
@@ -330,10 +329,7 @@ class ActionStateToLatentRNN(nn.Module):
         x = torch.cat([actions, frame_features], dim=-1)  # (batch, seq_len, action_dim + 128)
 
         # RNN pass
-        if self.rnn_type == "lstm":
-            rnn_out, (h_n, c_n) = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
-        else:
-            rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
+        rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
 
         # Predict latents
         logits = self.head(rnn_out)  # (batch, seq_len, latent_dim * codebook_size)
