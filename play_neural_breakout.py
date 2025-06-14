@@ -22,7 +22,7 @@ import pygame
 from PIL import Image
 import time
 import argparse
-from latent_action_model import load_latent_action_model, ActionStateToLatentMLP
+from latent_action_model import load_latent_action_model, ActionStateToLatentRNN
 
 # --- Configuration ---
 WINDOW_WIDTH = 640
@@ -70,8 +70,8 @@ def main():
     
     # Load action-to-latent model
     print("[INFO] Loading action-to-latent model...")
-    action_model = ActionStateToLatentMLP().to(device)
-    ckpt = torch.load('checkpoints/latent_action/action_state_to_latent_best.pt', map_location=device)
+    action_model = ActionStateToLatentRNN().to(device)
+    ckpt = torch.load('checkpoints/latent_action_rnn/action_state_to_latent_best.pt', map_location=device)
     fixed_state_dict = {}
     for k,v in ckpt['model_state_dict'].items():
         if k.startswith('_orig_mod'):
@@ -83,15 +83,20 @@ def main():
     action_model.eval()
     if device.type == 'cuda':
         action_model = torch.compile(action_model)
+
+    # hidden_state = None
     
     # Load initial frame
     print("[INFO] Loading initial frame...")
     init_img = Image.open('data/0.png').convert('RGB')
     init_frame_np = np.array(init_img, dtype=np.float32) / 255.0
+    print(f"[INFO] Initial frame shape: {init_frame_np.shape}")
     current_frame = torch.from_numpy(init_frame_np).permute(2, 0, 1).unsqueeze(0).to(device)
+    action_idx = 0  # Default to NOOP
     
     # Set up frame history
     last3_frames = [current_frame.clone(), current_frame.clone(), current_frame.clone()]
+    last3_actions = [action_to_onehot(action_idx, device), action_to_onehot(action_idx, device), action_to_onehot(action_idx, device)]  # Store last 3 actions (NOOP by default)
     
     # Action mapping
     action_names = ['NOOP', 'FIRE', 'RIGHT', 'LEFT']
@@ -103,7 +108,7 @@ def main():
     }
     
     # Game state
-    action_idx = 0  # Default to NOOP
+    
     last_displayed_action = ""  # For display purposes
     score = 0
     step = 0
@@ -157,11 +162,12 @@ def main():
         # clone first frame to make second frame and then generate the third frame 
         with torch.no_grad():
             # Stack last 3 frames
-            stacked_frames = torch.cat([last3_frames[0], last3_frames[1], last3_frames[2]], dim=1)
+            stacked_frames = torch.stack([last3_frames[0], last3_frames[1], last3_frames[2]], dim=1)
+            action_seq = torch.stack(last3_actions, dim=1)
             
             # Get action prediction
-            onehot = action_to_onehot(action_idx, device)
-            logits = action_model(onehot, stacked_frames)
+            # onehot = action_to_onehot(action_idx, device)
+            logits = action_model(action_seq, stacked_frames)
             indices = action_model.sample_latents(logits, temperature=args.temperature)
             
             # Reshape indices and get embeddings
@@ -186,6 +192,11 @@ def main():
             last3_frames[1] = last3_frames[2]
             last3_frames[2] = next_frame.clone()
             current_frame = next_frame.clone()
+
+            last3_actions[0] = last3_actions[1]
+            last3_actions[1] = last3_actions[2]
+            last3_actions[2] = action_to_onehot(action_idx, device)
+            
         
         # Convert the frame to a pygame surface for display
         frame_np = current_frame.squeeze(0).permute(1, 2, 0).cpu().numpy()

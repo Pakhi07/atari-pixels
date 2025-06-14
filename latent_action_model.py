@@ -287,7 +287,7 @@ class ActionStateToLatentRNN(nn.Module):
 
         # Frame encoder (same as before)
         self.frame_encoder = nn.Sequential(
-            nn.Conv2d(9, 16, kernel_size=8, stride=4),  # (B, 16, 51, 39)
+            nn.Conv2d(3, 16, kernel_size=8, stride=4),  # (B, 16, 51, 39)
             nn.ReLU(),
             nn.Conv2d(16, 32, kernel_size=4, stride=2),  # (B, 32, 24, 18)
             nn.ReLU(),
@@ -318,15 +318,26 @@ class ActionStateToLatentRNN(nn.Module):
         Returns:
             logits: (batch, seq_len, latent_dim, codebook_size)
         """
-        batch_size, seq_len = actions.shape[:2]
+        seq_len = frames.shape[1]
+        encoded_frames = []
+        for i in range(seq_len):
+            encoded = self.frame_encoder(frames[:, i, :, :, :])  # (batch, 128)
+            encoded_frames.append(encoded)  # (batch, 1, 128)
 
-        # Encode frames
-        frames = frames.view(-1, *frames.shape[2:])  # (batch*seq_len, C, H, W)
-        frame_features = self.frame_encoder(frames)  # (batch*seq_len, 128)
-        frame_features = frame_features.view(batch_size, seq_len, -1)  # (batch, seq_len, 128)
+        encoded_frames = torch.stack(encoded_frames, dim=1)  # (batch, seq_len, 128)
+
+        # Combine actions + frame features
+
+
+        
+        print("Input to encoder:", encoded_frames.shape)
+        print("Actions shape:", actions.shape)
+
+        
 
         # Combine actions + frame features
         x = torch.cat([actions, frame_features], dim=-1)  # (batch, seq_len, action_dim + 128)
+        print("Combined input shape:", x.shape)
 
         # RNN pass
         rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
