@@ -280,6 +280,7 @@ class ActionStateToLatentRNN(nn.Module):
         codebook_size=256,
         num_layers=2,
         dropout=0.2,
+        # pooling='attention',
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -301,10 +302,16 @@ class ActionStateToLatentRNN(nn.Module):
         self.rnn = nn.GRU(
             input_size=action_dim + 128,
             hidden_size=hidden_dim,
-            num_layers=num_layers,
+            # num_layers=num_layers,
             batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
+            # dropout=dropout if num_layers > 1 else 0,
         )
+
+        self.pooling = 'attention'
+        if self.pooling == 'attention':
+            self.attn_layer = nn.Sequential(
+                nn.Linear(hidden_dim, 1),
+            )
 
         # Output head
         self.head = nn.Linear(hidden_dim, latent_dim * codebook_size)
@@ -319,6 +326,8 @@ class ActionStateToLatentRNN(nn.Module):
         """
         # print("FRames", frames.size())
         batch_size, seq_len, _, _, _ = frames.size()
+        # print("FRames", frames.size())
+        batch_size, seq_len, _, _, _ = frames.size()
         seq_len = frames.shape[1]
         encoded_frames = []
         for i in range(seq_len):
@@ -328,20 +337,38 @@ class ActionStateToLatentRNN(nn.Module):
         encoded_frames = torch.stack(encoded_frames, dim=1)  # (batch, seq_len, 128)
 
         actions = actions.squeeze(2)
+        actions = actions.squeeze(2)
 
+        # print("Input to encoder:", encoded_frames.shape)
+        # print("Actions shape:", actions.shape)
         # print("Input to encoder:", encoded_frames.shape)
         # print("Actions shape:", actions.shape)
 
         # Combine actions + frame features
         x = torch.cat([actions, encoded_frames], dim=-1)  # (batch, seq_len, action_dim + 128)
         # print("Combined input shape:", x.shape)
+        x = torch.cat([actions, encoded_frames], dim=-1)  # (batch, seq_len, action_dim + 128)
+        # print("Combined input shape:", x.shape)
 
         # RNN pass
         rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
+        # print(h_n.shape)
+        # h_n = h_n.squeeze(0)
+        # print(h_n.shape)
+        if self.pooling == 'mean':
+            pooled = rnn_out.mean(dim=1)  # [B, H]
+        elif self.pooling == 'max':
+            pooled, _ = rnn_out.max(dim=1)  # [B, H]
+        elif self.pooling == 'attention':
+            attn_weights = torch.softmax(self.attn_layer(rnn_out), dim=1)  # [B, T, 1]
+            pooled = (rnn_out * attn_weights).sum(dim=1)  # [B, H]
+        else:
+            pooled = rnn_out[:, -1]
 
         # Predict latents
-        logits = self.head(rnn_out)  # (batch, seq_len, latent_dim * codebook_size)
-        logits = logits.view(batch_size, seq_len, self.latent_dim, self.codebook_size)
+        logits = self.head(pooled)  # (batch, seq_len, latent_dim * codebook_size)
+        # print("logits shape", logits.shape)
+        logits = logits.view(batch_size, self.latent_dim, self.codebook_size)
 
         return logits
 
