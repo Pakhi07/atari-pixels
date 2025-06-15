@@ -43,6 +43,8 @@ def action_to_onehot(action_idx, device):
     onehot[0, action_idx] = 1.0
     return onehot
 
+frames_to_gif = []  
+
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser()
@@ -190,6 +192,10 @@ def main():
         # Convert the frame to a pygame surface for display
         frame_np = current_frame.squeeze(0).permute(1, 2, 0).cpu().numpy()
         frame_np = (frame_np * 255).clip(0, 255).astype(np.uint8)
+
+        if len(frames_to_gif) < 300:  # Limit GIF to ~20s (300 frames at 15 FPS)
+            frame_for_gif = Image.fromarray(frame_np)
+            frames_to_gif.append(frame_for_gif)
         
         # Create surface from numpy array
         frame_surface = pygame.surfarray.make_surface(np.transpose(frame_np, (1, 0, 2)))
@@ -216,6 +222,14 @@ def main():
         
         # Limit framerate
         clock.tick(FPS)
+    
+    print("Saving gameplay GIF...")
+    gif_path = "gameplay_mlp.gif"
+    if frames_to_gif:
+        frames_to_gif[0].save(gif_path, save_all=True, append_images=frames_to_gif[1:], duration=1000//FPS, loop=0)
+        print(f"Saved GIF to {gif_path}")
+    else:
+        print("No frames captured for GIF.")
     
     # Clean up
     pygame.quit()
