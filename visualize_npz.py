@@ -1,13 +1,13 @@
 import numpy as np
 
 data = np.load('data/actions/action_latent_pairs.npz')
-actions = data['actions']
-frames = data['frames']
-latents = data['latents']
+# actions = data['actions']
+# frames = data['frames']
+# latents = data['latents']
 
-print("actions shape:", actions.shape)     # (N,)
-print("frames shape:", frames.shape)       # (N, 9, H, W)
-print("latents shape:", latents.shape)     # (N, latent_dim)
+# print("actions shape:", actions.shape)     # (N,)
+# print("frames shape:", frames.shape)       # (N, 9, H, W)
+# print("latents shape:", latents.shape)     # (N, latent_dim)
 
 
 import matplotlib.pyplot as plt
@@ -20,33 +20,28 @@ latents = data['latents']
 
 # Number of samples to plot
 num_samples = 5
-
-# Create figure with one row per sample, and 3 columns for RGB frames
 fig, axes = plt.subplots(num_samples, 3, figsize=(12, 4 * num_samples))
 
 for i in range(num_samples):
-    # Extract 3 RGB frames from the stacked 9-channel input
-    rgb1 = frames[i+70][0:3].transpose(1, 2, 0)
-    rgb2 = frames[i+70][3:6].transpose(1, 2, 0)
-    rgb3 = frames[i+70][6:9].transpose(1, 2, 0)
+    # Select i-th example from the dataset
+    frame_set = frames[i + 70]       # (3, 3, 210, 160)
+    action_set = actions[i + 70]     # (3, 1, 4)
+    latent_vec = latents[i + 70]     # (35,)
 
-    # Scale from [0,1] to [0,255] if needed
-    rgb1 = (rgb1 * 255).astype(np.uint8)
-    rgb2 = (rgb2 * 255).astype(np.uint8)
-    rgb3 = (rgb3 * 255).astype(np.uint8)
-
-    # Plot each frame
-    axes[i, 0].imshow(rgb1)
-    axes[i, 0].set_title(f'Sample {i} - Frame 1')
-
-    axes[i, 1].imshow(rgb2)
-    axes[i, 1].set_title(f'Action: {actions[i]}')
-
-    axes[i, 2].imshow(rgb3)
-    axes[i, 2].set_title(f'Latent')
-
-    for ax in axes[i]:
-        ax.axis('off')
+    # Display 3 RGB frames
+    for j in range(3):
+        rgb = frame_set[j].transpose(1, 2, 0)     # (210, 160, 3)
+        rgb = (rgb * 255).astype(np.uint8)        # scale to 0-255 if needed
+        axes[i, j].imshow(rgb)
+        if j == 1:
+            action_str = np.array2string(action_set[j].squeeze(), precision=2, separator=',')
+            axes[i, j].set_title(f'Action: {action_str}')
+        elif j == 2:
+            latent_str = np.array2string(latent_vec[:5], precision=2, separator=',')  # partial display
+            axes[i, j].set_title(f'Latent[:5]: {latent_str}')
+        else:
+            axes[i, j].set_title(f'Sample {i} - Frame {j+1}')
+        axes[i, j].axis('off')
 
 plt.tight_layout()
 plt.show()

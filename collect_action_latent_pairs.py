@@ -50,6 +50,11 @@ def flatten_latent_indices(indices):
     else:
         raise ValueError(f"Unexpected indices shape: {indices.shape}")
 
+def action_to_onehot(action_idx, device):
+    onehot = torch.zeros(1, 4, device=device)
+    onehot[0, action_idx] = 1.0
+    return onehot
+
 def collect_action_latent_pairs(
     out_path='data/actions/action_latent_pairs.json',
     n_pairs=100_000,
@@ -142,7 +147,7 @@ def collect_action_state_latent_triples(
     env = AtariBreakoutEnv(return_rgb=True)
     n_actions = env.action_space.n
     agent = RandomAgent(n_actions)
-    actions = []
+    action_sequences = []
     frames = []
     latents = []
     np.random.seed(seed)
@@ -150,12 +155,13 @@ def collect_action_state_latent_triples(
     episode = 0
     pbar = tqdm(total=n_pairs, desc='Collecting (action, frames, latent_code) triples')
     try:
-        while len(actions) < n_pairs:
+        while len(action_sequences) < n_pairs:
             obs, _ = env.reset()
             # Add this line to flip the channels to match VQ-VAE training format
             obs = obs[:, :, ::-1].copy()  # Swap BGR -> RGB to match PNG format
             frame_t = torch.from_numpy(obs).float().permute(2, 0, 1) / 255.0  # (3, 210, 160)
-            last3_frames = [frame_t.clone(), frame_t.clone(), frame_t.clone()]  # Store last 3 frames
+            last3_frames = [frame_t]*3  # Store last 3 frames
+            last3_actions = [action_to_onehot(0, device), action_to_onehot(0, device), action_to_onehot(0, device)]  # Store last 3 actions
             done = False
             steps = 0
             action = agent.select_action()
@@ -163,13 +169,14 @@ def collect_action_state_latent_triples(
             # Also swap channels for next_obs
             next_obs = next_obs[:, :, ::-1].copy()  # Swap BGR -> RGB
             frame_tp1 = torch.from_numpy(next_obs).float().permute(2, 0, 1) / 255.0
-            while not done and steps < max_steps_per_episode and len(actions) < n_pairs:
+            while not done and steps < max_steps_per_episode and len(action_sequences) < n_pairs:
                 action = agent.select_action()
                 next_obs, reward, terminated, truncated, info = env.step(action)
                 # Also swap channels for next_obs
                 next_obs = next_obs[:, :, ::-1].copy()  # Swap BGR -> RGB
                 frame_tp2 = torch.from_numpy(next_obs).float().permute(2, 0, 1) / 255.0
-                stacked_frames = torch.cat(last3_frames, dim=0)
+                stacked_frames = torch.stack(last3_frames, dim=0)
+                stacked_actions = torch.stack(last3_actions, dim=0)
                 try:
                     with torch.no_grad():
                         f0 = last3_frames[0].unsqueeze(0).to(device)
@@ -187,13 +194,18 @@ def collect_action_state_latent_triples(
                     print(f"frame_tp1 shape: {f1.shape}, dtype: {f1.dtype}")
                     raise
                 latent_code = flatten_latent_indices(indices.cpu().squeeze(0))
-                actions.append(int(action))
+                # actions.append(int(action))
                 frames.append(stacked_frames.cpu().numpy())
                 latents.append(np.array(latent_code, dtype=np.int64))
+                action_sequences.append(stacked_actions.cpu().numpy())
                 pbar.update(1)
                 last3_frames[0] = last3_frames[1]
                 last3_frames[1] = last3_frames[2]
-                last3_frames[2] = frame_tp2.clone()  
+                last3_frames[2] = frame_tp2.clone()
+                last3_actions[0] = last3_actions[1]
+                last3_actions[1] = last3_actions[2]
+                last3_actions[2] = action_to_onehot(action, device)
+                  
                 steps += 1
                 if terminated or truncated:
                     done = True
@@ -203,11 +215,11 @@ def collect_action_state_latent_triples(
     finally:
         env.close()
         pbar.close()
-        actions_np = np.array(actions, dtype=np.int64)
+        actions_np = np.stack(action_sequences).astype(np.float32)
         frames_np = np.stack(frames).astype(np.float32)
         latents_np = np.stack(latents).astype(np.int64)
         np.savez_compressed(out_path, actions=actions_np, frames=frames_np, latents=latents_np)
-        print(f"Saved {len(actions)} triples to {out_path} (npz format, compressed)")
+        print(f"Saved {len(action_sequences)} triples to {out_path} (npz format, compressed)")
         # Log summary statistics
         print("Action distribution:", {a: int((actions_np == a).sum()) for a in np.unique(actions_np)})
         print("Example latent code:", latents_np[0] if len(latents_np) > 0 else None)

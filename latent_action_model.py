@@ -305,7 +305,6 @@ class ActionStateToLatentRNN(nn.Module):
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0,
         )
-       
 
         # Output head
         self.head = nn.Linear(hidden_dim, latent_dim * codebook_size)
@@ -318,6 +317,8 @@ class ActionStateToLatentRNN(nn.Module):
         Returns:
             logits: (batch, seq_len, latent_dim, codebook_size)
         """
+        # print("FRames", frames.size())
+        batch_size, seq_len, _, _, _ = frames.size()
         seq_len = frames.shape[1]
         encoded_frames = []
         for i in range(seq_len):
@@ -326,18 +327,14 @@ class ActionStateToLatentRNN(nn.Module):
 
         encoded_frames = torch.stack(encoded_frames, dim=1)  # (batch, seq_len, 128)
 
-        # Combine actions + frame features
+        actions = actions.squeeze(2)
 
-
-        
-        print("Input to encoder:", encoded_frames.shape)
-        print("Actions shape:", actions.shape)
-
-        
+        # print("Input to encoder:", encoded_frames.shape)
+        # print("Actions shape:", actions.shape)
 
         # Combine actions + frame features
-        x = torch.cat([actions, frame_features], dim=-1)  # (batch, seq_len, action_dim + 128)
-        print("Combined input shape:", x.shape)
+        x = torch.cat([actions, encoded_frames], dim=-1)  # (batch, seq_len, action_dim + 128)
+        # print("Combined input shape:", x.shape)
 
         # RNN pass
         rnn_out, h_n = self.rnn(x)  # rnn_out: (batch, seq_len, hidden_dim)
@@ -353,6 +350,6 @@ class ActionStateToLatentRNN(nn.Module):
         if temperature <= 0:
             raise ValueError("Temperature must be > 0")
         probs = F.softmax(logits / temperature, dim=-1)
-        batch, seq_len, latent_dim, codebook_size = probs.shape
-        samples = torch.multinomial(probs.view(-1, codebook_size), 1).view(batch, seq_len, latent_dim)
+        batch, latent_dim, codebook_size = probs.shape
+        samples = torch.multinomial(probs.view(-1, codebook_size), 1).view(batch, latent_dim)
         return samples

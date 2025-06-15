@@ -72,7 +72,11 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None, wi
                 logits = model(actions, frames)
             else:
                 logits = model(actions)
-            loss = criterion(logits.view(-1, 256), latents.view(-1))
+            
+            logits = logits[:,-1,:,:]
+            # print("logits", logits.shape)
+            # print("latents", latents.shape)
+            loss = criterion(logits.reshape(-1, 256), latents.reshape(-1))
         
         if scaler:
             scaler.scale(loss).backward()
@@ -127,7 +131,11 @@ def eval_one_epoch(model, loader, criterion, device, with_frames=False):
             else:
                 logits = model(actions)
 
-            loss = criterion(logits.view(-1, 256), latents.view(-1))
+            logits = logits[:,-1,:,:]
+            # print("logits", logits.shape)
+            # print("latents", latents.shape)
+            loss = criterion(logits.reshape(-1, 256), latents.reshape(-1))
+            # loss = criterion(logits.view(-1, 256), latents.view(-1))
             running_loss += loss.item() * actions.size(0)
             preds = logits.argmax(dim=-1)
             correct += (preds == latents).sum().item()

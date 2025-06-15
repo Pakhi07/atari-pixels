@@ -218,23 +218,23 @@ class RNNActionStateLatentDataset(Dataset):
             self.valid_indices = list(range(start, end - seq_len + 1))
 
     def __len__(self):
-        return len(self.valid_indices)
+        return len(self.frames)
 
     def __getitem__(self, idx):
-        start_idx = self.valid_indices[idx]
-        end_idx = start_idx + self.seq_len
+        # start_idx = self.valid_indices[idx]
+        # end_idx = start_idx + self.seq_len
         
         # Get sequence slices
-        actions = self.actions[start_idx:end_idx]  # (seq_len,)
-        frames = self.frames[start_idx:end_idx]     # (seq_len, 6, 210, 160)
-        latents = self.latents[start_idx:end_idx]   # (seq_len, 35)
+        actions = self.actions[idx]  # (seq_len,)
+        frames = self.frames[idx]     # (seq_len, 6, 210, 160)
+        latents = self.latents[idx]   # (seq_len, 35)
         
         # Convert actions to one-hot
-        action_onehot = np.zeros((self.seq_len, self.num_classes), dtype=np.float32)
-        action_onehot[np.arange(self.seq_len), actions] = 1.0
+        # action_onehot = np.zeros((self.seq_len, self.num_classes), dtype=np.float32)
+        # action_onehot[np.arange(self.seq_len), actions] = 1.0
         
         return {
-            'actions': torch.from_numpy(action_onehot),
+            'actions': torch.from_numpy(actions.astype(np.float32)),
             'frames': torch.from_numpy(frames.astype(np.float32)),
             'latents': torch.from_numpy(latents.astype(np.int64))
         }
@@ -264,10 +264,11 @@ def get_action_state_latent_dataloaders_for_rnn(batch_size=32, seq_len=3, num_wo
     
     # Custom collate function to handle sequences
     def collate_fn(batch):
-        # Stack sequences along batch dimension
+        # Stack along the new batch dimension
         actions = torch.stack([item['actions'] for item in batch])
         frames = torch.stack([item['frames'] for item in batch])
         latents = torch.stack([item['latents'] for item in batch])
+
         # print("action beeee: ", actions)
         # print("frames: ", frames)
         # print("latent: ", latents)
