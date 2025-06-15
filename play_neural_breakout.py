@@ -162,14 +162,16 @@ def main():
         # clone first frame to make second frame and then generate the third frame 
         with torch.no_grad():
             # Stack last 3 frames
-            stacked_frames = torch.stack([last3_frames[0], last3_frames[1], last3_frames[2]], dim=0)
-            action_seq = torch.stack(last3_actions, dim=0)
+            stacked_frames = torch.stack([last3_frames[0], last3_frames[1], last3_frames[2]], dim=1)
+            action_seq = torch.stack(last3_actions, dim=1)
+            # print("shape stacked_frames", stacked_frames.shape)
+            # print("shape action_seq", action_seq.shape)
             
             # Get action prediction
             # onehot = action_to_onehot(action_idx, device)
             logits = action_model(action_seq, stacked_frames)
             # print("shape logits", logits.shape)
-            logits = logits[-1, :, :, :]  # Get the last time step's logits
+            # logits = logits[-1, :, :, :]  # Get the last time step's logits
             indices = action_model.sample_latents(logits, temperature=args.temperature)
             # print("shape logits", logits.shape)
             # print("shape indices", indices.shape)
